@@ -1,0 +1,34 @@
+# AWS S3 Multi-Threaded Downloader Requirements
+
+# Core Python standard library modules (no installation needed):
+# - os
+# - subprocess
+# - sys
+# - time
+# - argparse
+# - re
+# - xml.etree.ElementTree
+# - threading
+# - queue
+# - datetime
+# - pathlib
+# - enum
+# - concurrent.futures
+
+# External dependencies:
+# AWS CLI (must be installed separately)
+# Installation: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+
+# Note: This script primarily uses Python standard library modules
+# and the AWS CLI tool. No additional Python packages are required.
+
+# If you need to install AWS CLI:
+# Windows: Download installer from AWS website
+# macOS: brew install awscli
+# Linux: sudo apt install awscli (Ubuntu/Debian) or sudo yum install awscli (RHEL/CentOS)
+
+# Verify AWS CLI installation:
+# aws --version
+
+# Configure AWS CLI with your credentials:
+# aws configure sso
