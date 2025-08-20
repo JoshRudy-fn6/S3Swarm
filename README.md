@@ -35,7 +35,7 @@ A robust, orchestrated Python tool for efficiently downloading large datasets fr
 
 1. Clone this repository:
 ```bash
-[git clone https://github.com/your-username/aws-s3-downloader.git](https://github.com/JoshRudy-fn6/S3Swarm.git)
+[git clone https://github.com/JoshRudy-fn6/S3Swarm.git
 cd S3Swarm
 ```
 
@@ -294,4 +294,5 @@ S3Swarm is designed for legitimate data migration and backup purposes. Users are
 ---
 
 **🐝 Deploy your swarm and harvest your data efficiently!**
+
 
