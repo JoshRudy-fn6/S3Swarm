@@ -95,10 +95,10 @@ The application uses your configured AWS SSO profile:
 
 ```bash
 # Configure your profile
-aws configure sso --profile dc3-cta
+aws configure sso --profile myprofile
 
 # Test authentication
-aws s3 ls --profile dc3-cta
+aws s3 ls --profile myprofile
 ```
 
 ## 🚀 Usage
@@ -133,7 +133,7 @@ python s3swarm.py --dry-run --max-workers 2 --profile your-profile
 | `--manifest` | `download_manifest.xml` | Manifest file path |
 | `--max-workers` | `4` | Maximum concurrent downloads |
 | `--max-retries` | `3` | Maximum retries per failed download |
-| `--profile` | `dc3-cta` | AWS SSO profile name |
+| `--profile` | `default` | AWS SSO profile name |
 | `--generate-manifest` | `False` | Only generate manifest, don't download |
 | `--dry-run` | `False` | Show what would be downloaded with live dashboard |
 | `--retry-failed` | `False` | Include failed items for retry |
@@ -319,5 +319,6 @@ S3Swarm is designed for legitimate data migration and backup purposes. Users are
 ---
 
 **🐝 Deploy your swarm and harvest your data efficiently with native boto3 power!**
+
 
 
