@@ -15,6 +15,7 @@ from botocore.exceptions import (
     SSOTokenLoadError
 )
 from botocore.session import Session
+from botocore.config import Config
 import subprocess
 from datetime import datetime
 
@@ -22,7 +23,7 @@ from datetime import datetime
 class SSOManager:
     """Manages AWS SSO authentication for boto3 sessions"""
     
-    def __init__(self, profile_name="dc3-cta"):
+    def __init__(self, profile_name="default"):
         self.profile_name = profile_name
         self.session = None
         self.s3_client = None
@@ -40,17 +41,53 @@ class SSOManager:
             self.session = boto3.Session()
     
     def get_s3_client(self, force_refresh=False):
-        """Get S3 client, refreshing if needed"""
+        """Get S3 client with optimized configuration, refreshing if needed"""
         if self.s3_client is None or force_refresh:
             try:
-                self.s3_client = self.session.client('s3')
+                # Create optimized configuration for high-performance downloads
+                config = Config(
+                    # Connection pool optimization - CRITICAL for performance!
+                    max_pool_connections=100,  # Default is only 10, this increases concurrent connections
+                    
+                    # Retry configuration
+                    retries={'max_attempts': 3, 'mode': 'adaptive'},
+                    
+                    # Timeout optimizations
+                    connect_timeout=10,  # Connection timeout
+                    read_timeout=30,     # Read timeout for large files
+                    
+                    # Performance optimizations
+                    tcp_keepalive=True,           # Keep connections alive
+                    parameter_validation=False,   # Skip parameter validation for speed
+                    
+                    # S3 specific optimizations
+                    s3={
+                        'addressing_style': 'virtual'     # Use virtual hosted-style addressing
+                        # Note: Transfer acceleration removed as it can cause InvalidRequest errors
+                        # on buckets that don't have it enabled
+                    }
+                )
+                
+                self.s3_client = self.session.client('s3', config=config)
                 # Test the client with a simple operation
                 self.s3_client.list_buckets()
-                print(f"[{datetime.now()}] S3 client ready")
+                print(f"[{datetime.now()}] Optimized S3 client ready (max_pool_connections=100)")
             except (TokenRetrievalError, UnauthorizedSSOTokenError, SSOTokenLoadError) as e:
                 print(f"[{datetime.now()}] SSO token issue: {e}")
                 if self._refresh_sso_token():
-                    self.s3_client = self.session.client('s3')
+                    # Recreate optimized client after token refresh
+                    config = Config(
+                        max_pool_connections=100,
+                        retries={'max_attempts': 3, 'mode': 'adaptive'},
+                        connect_timeout=10,
+                        read_timeout=30,
+                        tcp_keepalive=True,
+                        parameter_validation=False,
+                        s3={
+                            'addressing_style': 'virtual'
+                        }
+                    )
+                    self.s3_client = self.session.client('s3', config=config)
                 else:
                     raise
             except NoCredentialsError:
@@ -61,7 +98,19 @@ class SSOManager:
                 if error_code in ['UnauthorizedOperation', 'InvalidUserID.NotFound']:
                     print(f"[{datetime.now()}] Authorization error: {e}")
                     if self._refresh_sso_token():
-                        self.s3_client = self.session.client('s3')
+                        # Recreate optimized client after token refresh
+                        config = Config(
+                            max_pool_connections=100,
+                            retries={'max_attempts': 3, 'mode': 'adaptive'},
+                            connect_timeout=10,
+                            read_timeout=30,
+                            tcp_keepalive=True,
+                            parameter_validation=False,
+                            s3={
+                                'addressing_style': 'virtual'
+                            }
+                        )
+                        self.s3_client = self.session.client('s3', config=config)
                     else:
                         raise
                 else:
@@ -120,22 +169,22 @@ class SSOManager:
         return True
 
 
-# Global SSO manager instance
-_sso_manager = None
+# Global SSO manager instances (one per profile)
+_sso_managers = {}
 
-def get_sso_manager(profile_name="dc3-cta"):
-    """Get the global SSO manager instance"""
-    global _sso_manager
-    if _sso_manager is None:
-        _sso_manager = SSOManager(profile_name)
-    return _sso_manager
+def get_sso_manager(profile_name="default"):
+    """Get the SSO manager instance for the specified profile"""
+    global _sso_managers
+    if profile_name not in _sso_managers:
+        _sso_managers[profile_name] = SSOManager(profile_name)
+    return _sso_managers[profile_name]
 
-def get_s3_client(profile_name="dc3-cta", force_refresh=False):
+def get_s3_client(profile_name="default", force_refresh=False):
     """Get an authenticated S3 client"""
     sso_manager = get_sso_manager(profile_name)
     return sso_manager.get_s3_client(force_refresh=force_refresh)
 
-def ensure_valid_credentials(profile_name="dc3-cta"):
+def ensure_valid_credentials(profile_name="default"):
     """Ensure we have valid AWS credentials"""
     sso_manager = get_sso_manager(profile_name)
     return sso_manager.ensure_valid_session()

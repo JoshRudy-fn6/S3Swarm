@@ -127,6 +127,10 @@ class ManifestManager:
 
 def parse_arguments():
     """Parse command line arguments"""
+    # Calculate optimal worker count for high-bandwidth connections
+    # Rule of thumb: 1 worker per 25-50 Mbps, optimized for 1Gbps = ~30 workers
+    optimal_workers = 30
+    
     parser = argparse.ArgumentParser(description='S3Swarm - Orchestrated S3 data collection with worker swarm (boto3 version)')
     parser.add_argument('--destination', type=str, default='./s3_downloads',
                        help='Destination directory for downloads (default: ./s3_downloads)')
@@ -134,8 +138,8 @@ def parse_arguments():
                        help='Text file containing bucket names (one per line)')
     parser.add_argument('--manifest', type=str, default='download_manifest.xml',
                        help='Manifest file path')
-    parser.add_argument('--max-workers', type=int, default=4,
-                       help='Maximum concurrent downloads (default: 4)')
+    parser.add_argument('--max-workers', type=int, default=optimal_workers,
+                       help=f'Maximum concurrent downloads (default: {optimal_workers}, optimized for 1Gbps)')
     parser.add_argument('--generate-manifest', action='store_true',
                        help='Only generate manifest, do not download')
     parser.add_argument('--dry-run', action='store_true',
@@ -577,7 +581,7 @@ def main():
             progress_monitor.refresh()
             
             try:
-                time.sleep(1)  # Update every 1 second for better responsiveness
+                time.sleep(2)  # Update every 2 seconds to avoid conflicts with progress updates
             except KeyboardInterrupt:
                 break
         
