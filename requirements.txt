@@ -2,7 +2,7 @@
 
 # Core Python standard library modules (no installation needed):
 # - os
-# - subprocess
+# - subprocess (still used for SSO token refresh)
 # - sys
 # - time
 # - argparse
@@ -15,14 +15,18 @@
 # - enum
 # - concurrent.futures
 
+# Required Python packages:
+boto3>=1.26.0
+botocore>=1.29.0
+rich
 # External dependencies:
-# AWS CLI (must be installed separately)
+# AWS CLI (required for SSO authentication)
 # Installation: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 
-# Note: This script primarily uses Python standard library modules
-# and the AWS CLI tool. No additional Python packages are required.
+# Install Python dependencies:
+# pip install -r requirements.txt
 
-# If you need to install AWS CLI:
+# Install AWS CLI:
 # Windows: Download installer from AWS website
 # macOS: brew install awscli
 # Linux: sudo apt install awscli (Ubuntu/Debian) or sudo yum install awscli (RHEL/CentOS)
@@ -32,3 +36,5 @@
 
 # Configure AWS CLI with your credentials:
 # aws configure sso
+
+# Note: boto3 will use the same SSO configuration as AWS CLI
