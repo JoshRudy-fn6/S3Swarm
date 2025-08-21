@@ -1,3 +1,4 @@
-dc3cta-handoff-exports
-dc3cta-resources
-dc3cta-ovf-imports
+bucket1
+bucket2
+bucket3
+
