@@ -23,7 +23,7 @@ from s3_operations import (
 from progress_monitor import ProgressMonitor, WorkerStatus, EnhancedProgressCallback
 from botocore.exceptions import ClientError, NoCredentialsError
 
-profile = "dc3-cta"
+profile = "default"
 
 class DownloadStatus(Enum):
     PENDING = "pending"
@@ -144,8 +144,8 @@ def parse_arguments():
                        help='Maximum retries per file (default: 3)')
     parser.add_argument('--retry-failed', action='store_true',
                        help='Include failed items in download queue for retry')
-    parser.add_argument('--profile', type=str, default="dc3-cta",
-                       help='AWS profile name (default: dc3-cta)')
+    parser.add_argument('--profile', type=str, default="default",
+                       help='AWS profile name (default: default)')
     return parser.parse_args()
 
 def load_buckets_from_file(buckets_file):
@@ -153,9 +153,11 @@ def load_buckets_from_file(buckets_file):
     if not os.path.exists(buckets_file):
         print(f"Creating example buckets file: {buckets_file}")
         with open(buckets_file, 'w') as f:
-            f.write("dc3cta-handoff-exports\n")
-            f.write("dc3cta-resources\n")
-            f.write("dc3cta-ovf-imports\n")
+            f.write("# Add your S3 bucket names here, one per line\n")
+            f.write("# Example:\n")
+            f.write("# my-bucket-1\n")
+            f.write("# my-bucket-2\n")
+            f.write("# my-bucket-3\n")
         print(f"Please edit {buckets_file} with your bucket names and run again")
         return []
     
