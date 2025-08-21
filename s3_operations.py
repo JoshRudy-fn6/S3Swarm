@@ -37,7 +37,7 @@ class ProgressCallback:
             self.last_update = now
 
 
-def list_bucket_contents_boto3(bucket_name, profile_name="dc3-cta"):
+def list_bucket_contents_boto3(bucket_name, profile_name="default"):
     """
     List all items in a bucket (both files and folders) using boto3
     
@@ -84,7 +84,7 @@ def list_bucket_contents_boto3(bucket_name, profile_name="dc3-cta"):
         return []
 
 
-def get_detailed_file_listing_boto3(bucket_name, item_name, item_type, profile_name="dc3-cta"):
+def get_detailed_file_listing_boto3(bucket_name, item_name, item_type, profile_name="default"):
     """
     Get detailed file listing for an item (file or folder) using boto3
     
@@ -149,7 +149,7 @@ def get_detailed_file_listing_boto3(bucket_name, item_name, item_type, profile_n
     return files
 
 
-def download_file_boto3(bucket_name, key, local_path, show_progress=True, profile_name="dc3-cta", 
+def download_file_boto3(bucket_name, key, local_path, show_progress=True, profile_name="default", 
                         progress_callback=None):
     """
     Download a file from S3 using boto3
@@ -201,7 +201,7 @@ def download_file_boto3(bucket_name, key, local_path, show_progress=True, profil
         return False
 
 
-def check_bucket_access_boto3(bucket_name, profile_name="dc3-cta"):
+def check_bucket_access_boto3(bucket_name, profile_name="default"):
     """
     Check if we have access to a bucket
     
@@ -228,7 +228,7 @@ def check_bucket_access_boto3(bucket_name, profile_name="dc3-cta"):
         return False
 
 
-def get_object_metadata_boto3(bucket_name, key, profile_name="dc3-cta"):
+def get_object_metadata_boto3(bucket_name, key, profile_name="default"):
     """
     Get metadata for an S3 object
     

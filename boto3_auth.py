@@ -23,7 +23,7 @@ from datetime import datetime
 class SSOManager:
     """Manages AWS SSO authentication for boto3 sessions"""
     
-    def __init__(self, profile_name="dc3-cta"):
+    def __init__(self, profile_name="default"):
         self.profile_name = profile_name
         self.session = None
         self.s3_client = None
@@ -173,19 +173,19 @@ class SSOManager:
 # Global SSO manager instance
 _sso_manager = None
 
-def get_sso_manager(profile_name="dc3-cta"):
+def get_sso_manager(profile_name="default"):
     """Get the global SSO manager instance"""
     global _sso_manager
     if _sso_manager is None:
         _sso_manager = SSOManager(profile_name)
     return _sso_manager
 
-def get_s3_client(profile_name="dc3-cta", force_refresh=False):
+def get_s3_client(profile_name="default", force_refresh=False):
     """Get an authenticated S3 client"""
     sso_manager = get_sso_manager(profile_name)
     return sso_manager.get_s3_client(force_refresh=force_refresh)
 
-def ensure_valid_credentials(profile_name="dc3-cta"):
+def ensure_valid_credentials(profile_name="default"):
     """Ensure we have valid AWS credentials"""
     sso_manager = get_sso_manager(profile_name)
     return sso_manager.ensure_valid_session()
