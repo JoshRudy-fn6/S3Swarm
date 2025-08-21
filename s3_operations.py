@@ -4,11 +4,14 @@ S3 Operations Module using boto3
 This module replaces subprocess calls to AWS CLI with native boto3 operations.
 Provides the same functionality as the original CLI-based functions but with
 better error handling, performance, and progress tracking.
+
+Optimized for high-performance downloads with increased connection pooling.
 """
 
 import os
 from datetime import datetime
 from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.config import Config
 from boto3_auth import get_s3_client, ensure_valid_credentials
 
 

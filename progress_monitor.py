@@ -61,9 +61,9 @@ class OverallStats:
     estimated_completion: Optional[datetime] = None
 
 class ProgressMonitor:
-    """Enhanced progress monitor with rich dashboard"""
+    """Enhanced progress monitor with rich dashboard optimized for high worker counts"""
     
-    def __init__(self, max_workers: int = 4):
+    def __init__(self, max_workers: int = 30):  # Updated default for high-bandwidth optimization
         self.max_workers = max_workers
         self.workers: Dict[int, WorkerInfo] = {}
         self.overall_stats = OverallStats()

@@ -15,6 +15,7 @@ from botocore.exceptions import (
     SSOTokenLoadError
 )
 from botocore.session import Session
+from botocore.config import Config
 import subprocess
 from datetime import datetime
 
@@ -40,17 +41,53 @@ class SSOManager:
             self.session = boto3.Session()
     
     def get_s3_client(self, force_refresh=False):
-        """Get S3 client, refreshing if needed"""
+        """Get S3 client with optimized configuration, refreshing if needed"""
         if self.s3_client is None or force_refresh:
             try:
-                self.s3_client = self.session.client('s3')
+                # Create optimized configuration for high-performance downloads
+                config = Config(
+                    # Connection pool optimization - CRITICAL for performance!
+                    max_pool_connections=100,  # Default is only 10, this increases concurrent connections
+                    
+                    # Retry configuration
+                    retries={'max_attempts': 3, 'mode': 'adaptive'},
+                    
+                    # Timeout optimizations
+                    connect_timeout=10,  # Connection timeout
+                    read_timeout=30,     # Read timeout for large files
+                    
+                    # Performance optimizations
+                    tcp_keepalive=True,           # Keep connections alive
+                    parameter_validation=False,   # Skip parameter validation for speed
+                    
+                    # S3 specific optimizations
+                    s3={
+                        'use_accelerate_endpoint': True,  # Use S3 Transfer Acceleration if available
+                        'addressing_style': 'virtual'     # Use virtual hosted-style addressing
+                    }
+                )
+                
+                self.s3_client = self.session.client('s3', config=config)
                 # Test the client with a simple operation
                 self.s3_client.list_buckets()
-                print(f"[{datetime.now()}] S3 client ready")
+                print(f"[{datetime.now()}] Optimized S3 client ready (max_pool_connections=100)")
             except (TokenRetrievalError, UnauthorizedSSOTokenError, SSOTokenLoadError) as e:
                 print(f"[{datetime.now()}] SSO token issue: {e}")
                 if self._refresh_sso_token():
-                    self.s3_client = self.session.client('s3')
+                    # Recreate optimized client after token refresh
+                    config = Config(
+                        max_pool_connections=100,
+                        retries={'max_attempts': 3, 'mode': 'adaptive'},
+                        connect_timeout=10,
+                        read_timeout=30,
+                        tcp_keepalive=True,
+                        parameter_validation=False,
+                        s3={
+                            'use_accelerate_endpoint': True,
+                            'addressing_style': 'virtual'
+                        }
+                    )
+                    self.s3_client = self.session.client('s3', config=config)
                 else:
                     raise
             except NoCredentialsError:
@@ -61,7 +98,20 @@ class SSOManager:
                 if error_code in ['UnauthorizedOperation', 'InvalidUserID.NotFound']:
                     print(f"[{datetime.now()}] Authorization error: {e}")
                     if self._refresh_sso_token():
-                        self.s3_client = self.session.client('s3')
+                        # Recreate optimized client after token refresh
+                        config = Config(
+                            max_pool_connections=100,
+                            retries={'max_attempts': 3, 'mode': 'adaptive'},
+                            connect_timeout=10,
+                            read_timeout=30,
+                            tcp_keepalive=True,
+                            parameter_validation=False,
+                            s3={
+                                'use_accelerate_endpoint': True,
+                                'addressing_style': 'virtual'
+                            }
+                        )
+                        self.s3_client = self.session.client('s3', config=config)
                     else:
                         raise
                 else:
