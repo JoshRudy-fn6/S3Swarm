@@ -1,5 +1,4 @@
 import os
-import subprocess
 import sys
 import time
 import argparse
@@ -12,7 +11,19 @@ from pathlib import Path
 from enum import Enum
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-profile = "dc3-cta"
+# Import our new boto3 modules
+from boto3_auth import ensure_valid_credentials, get_s3_client
+from s3_operations import (
+    list_bucket_contents_boto3,
+    get_detailed_file_listing_boto3,
+    download_file_boto3,
+    check_bucket_access_boto3,
+    format_boto3_error
+)
+from progress_monitor import ProgressMonitor, WorkerStatus, EnhancedProgressCallback
+from botocore.exceptions import ClientError, NoCredentialsError
+
+profile = "default"
 
 class DownloadStatus(Enum):
     PENDING = "pending"
@@ -116,7 +127,7 @@ class ManifestManager:
 
 def parse_arguments():
     """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='S3Swarm - Orchestrated S3 data collection with worker swarm')
+    parser = argparse.ArgumentParser(description='S3Swarm - Orchestrated S3 data collection with worker swarm (boto3 version)')
     parser.add_argument('--destination', type=str, default='./s3_downloads',
                        help='Destination directory for downloads (default: ./s3_downloads)')
     parser.add_argument('--buckets-file', type=str, default='buckets.txt',
@@ -133,6 +144,8 @@ def parse_arguments():
                        help='Maximum retries per file (default: 3)')
     parser.add_argument('--retry-failed', action='store_true',
                        help='Include failed items in download queue for retry')
+    parser.add_argument('--profile', type=str, default="default",
+                       help='AWS profile name (default: default)')
     return parser.parse_args()
 
 def load_buckets_from_file(buckets_file):
@@ -140,9 +153,11 @@ def load_buckets_from_file(buckets_file):
     if not os.path.exists(buckets_file):
         print(f"Creating example buckets file: {buckets_file}")
         with open(buckets_file, 'w') as f:
-            f.write("dc3cta-handoff-exports\n")
-            f.write("dc3cta-resources\n")
-            f.write("dc3cta-ovf-imports\n")
+            f.write("# Add your S3 bucket names here, one per line\n")
+            f.write("# Example:\n")
+            f.write("# my-bucket-1\n")
+            f.write("# my-bucket-2\n")
+            f.write("# my-bucket-3\n")
         print(f"Please edit {buckets_file} with your bucket names and run again")
         return []
     
@@ -154,31 +169,6 @@ def load_buckets_from_file(buckets_file):
                 buckets.append(bucket)
     
     return buckets
-
-def check_sso_login():
-    """Check if AWS SSO is still valid"""
-    try:
-        subprocess.run([
-            "aws", "sts", "get-caller-identity", 
-            "--profile", profile
-        ], capture_output=True, text=True, check=True)
-        return True
-    except subprocess.CalledProcessError:
-        return False
-
-def renew_sso_login():
-    """Renew AWS SSO login"""
-    print(f"[{datetime.now()}] AWS SSO token expired. Please re-authenticate...")
-    try:
-        subprocess.run([
-            "aws", "sso", "login", 
-            "--profile", profile
-        ], check=True)
-        print(f"[{datetime.now()}] SSO login successful")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"[{datetime.now()}] SSO login failed: {e}")
-        return False
 
 def format_size(bytes_size):
     """Format bytes to human readable size"""
@@ -193,131 +183,15 @@ def format_size(bytes_size):
     
     return f"{bytes_size:.1f} {units[i]}"
 
-def parse_aws_size(size_str):
-    """Parse AWS size string to bytes"""
-    size_str = size_str.strip()
-    if not size_str or size_str == '0' or size_str == '--':
-        return 0
-    
-    # Remove commas and split size and unit
-    size_str = size_str.replace(',', '')
-    
-    # Use regex to separate number and unit
-    match = re.match(r'([\d.]+)\s*([A-Za-z]*)', size_str)
-    if not match:
-        return 0
-    
-    try:
-        size_value = float(match.group(1))
-        unit = match.group(2).upper() if match.group(2) else 'B'
-        
-        multipliers = {
-            '': 1, 'B': 1, 'BYTE': 1, 'BYTES': 1,
-            'KB': 1024, 'KILOBYTE': 1024, 'KILOBYTES': 1024,
-            'MB': 1024**2, 'MEGABYTE': 1024**2, 'MEGABYTES': 1024**2,
-            'GB': 1024**3, 'GIGABYTE': 1024**3, 'GIGABYTES': 1024**3,
-            'TB': 1024**4, 'TERABYTE': 1024**4, 'TERABYTES': 1024**4
-        }
-        
-        return int(size_value * multipliers.get(unit, 1))
-    except (ValueError, KeyError):
-        return 0
+def list_bucket_contents(bucket_name, profile_name):
+    """List all items in a bucket using boto3"""
+    return list_bucket_contents_boto3(bucket_name, profile_name)
 
-def list_bucket_contents(bucket_name):
-    """List all items in a bucket (both files and folders)"""
-    try:
-        cmd = [
-            "aws", "s3", "ls", f"s3://{bucket_name}/", 
-            "--profile", profile
-        ]
-        
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
-        items = []
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            
-            parts = line.split()
-            if len(parts) >= 2:
-                if line.endswith('/'):  # Directory
-                    folder_name = parts[-1].rstrip('/')
-                    items.append((folder_name, 'folder'))
-                else:  # File
-                    if len(parts) >= 3:
-                        filename = ' '.join(parts[3:])  # Handle filenames with spaces
-                        items.append((filename, 'file'))
-        
-        return items
-    except subprocess.CalledProcessError as e:
-        print(f"Error listing bucket {bucket_name}: {e}")
-        return []
+def get_detailed_file_listing(bucket_name, item_name, item_type, profile_name):
+    """Get detailed file listing using boto3"""
+    return get_detailed_file_listing_boto3(bucket_name, item_name, item_type, profile_name)
 
-def get_detailed_file_listing(bucket_name, item_name, item_type):
-    """Get detailed file listing for an item (file or folder)"""
-    files = []
-    
-    try:
-        if item_type == 'file':
-            # Single file
-            cmd = [
-                "aws", "s3", "ls", f"s3://{bucket_name}/{item_name}",
-                "--profile", profile
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            line = result.stdout.strip()
-            
-            if line:
-                parts = line.split()
-                if len(parts) >= 3:
-                    size_bytes = int(parts[2])
-                    files.append({
-                        'filename': item_name,
-                        'size': size_bytes,
-                        'path': item_name
-                    })
-        
-        else:  # folder
-            # Recursive folder listing
-            cmd = [
-                "aws", "s3", "ls", f"s3://{bucket_name}/{item_name}/", 
-                "--recursive", "--profile", profile
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            
-            for line in result.stdout.strip().split('\n'):
-                line = line.strip()
-                if not line or line.startswith('PRE'):
-                    continue
-                
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        size_bytes = int(parts[2])
-                        file_path = ' '.join(parts[3:])
-                        filename = os.path.basename(file_path)
-                        
-                        # Skip empty filenames or directories
-                        if not filename or not filename.strip():
-                            continue
-                        
-                        files.append({
-                            'filename': filename,
-                            'size': size_bytes,
-                            'path': file_path
-                        })
-                    except (ValueError, IndexError):
-                        continue
-    
-    except subprocess.CalledProcessError as e:
-        print(f"Error getting detailed listing for {bucket_name}/{item_name}: {e}")
-    
-    return files
-
-def generate_manifest(buckets, manifest_manager):
+def generate_manifest(buckets, manifest_manager, profile_name):
     """Generate complete manifest of all files to download"""
     print(f"[{datetime.now()}] Generating manifest for {len(buckets)} buckets...")
     
@@ -327,15 +201,20 @@ def generate_manifest(buckets, manifest_manager):
     for bucket in buckets:
         print(f"\n[{datetime.now()}] Processing bucket: {bucket}")
         
+        # Check bucket access first
+        if not check_bucket_access_boto3(bucket, profile_name):
+            print(f"  Skipping bucket {bucket} - no access")
+            continue
+        
         # Get bucket contents
-        items = list_bucket_contents(bucket)
+        items = list_bucket_contents(bucket, profile_name)
         print(f"  Found {len(items)} items")
         
         for item_name, item_type in items:
             print(f"  Analyzing {item_type}: {item_name}")
             
             # Get detailed file listing
-            files = get_detailed_file_listing(bucket, item_name, item_type)
+            files = get_detailed_file_listing(bucket, item_name, item_type, profile_name)
             
             for file_info in files:
                 # Skip empty filenames or zero-size entries that aren't valid files
@@ -383,8 +262,8 @@ def check_lock_file(dest_path, filename):
     lock_file = os.path.join(dest_path, f"{filename}.lock")
     return os.path.exists(lock_file)
 
-def download_single_file(item, base_dest_path, manifest_manager, max_retries=3):
-    """Download a single file with lock file protection"""
+def download_single_file(item, base_dest_path, manifest_manager, max_retries, profile_name, progress_monitor=None, worker_id=None):
+    """Download a single file with lock file protection using boto3"""
     bucket = item.get("bucket")
     folder = item.get("folder")
     filename = item.get("filename")
@@ -393,6 +272,8 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries=3):
     
     # Skip invalid entries (empty filenames, directories, etc.)
     if not filename or not filename.strip():
+        if progress_monitor and worker_id:
+            progress_monitor.update_worker_status(worker_id, WorkerStatus.FAILED, error="Invalid entry - empty filename")
         print(f"[{datetime.now()}] Skipping invalid entry with empty filename in {bucket}/{folder}")
         manifest_manager.update_status(item, DownloadStatus.FAILED, "Invalid entry - empty filename")
         return False
@@ -400,7 +281,7 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries=3):
     # Determine source and destination paths
     if file_path and file_path != filename:
         # File is in a subfolder structure
-        source_path = f"s3://{bucket}/{file_path}"
+        source_key = file_path
         # Clean up the path by removing the folder prefix and getting the directory
         relative_path = file_path.replace(folder + '/', '', 1) if file_path.startswith(folder + '/') else file_path
         subdir = os.path.dirname(relative_path)
@@ -411,7 +292,7 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries=3):
         dest_file = os.path.join(dest_dir, filename)
     else:
         # File is directly in the folder or is the folder itself
-        source_path = f"s3://{bucket}/{folder}"
+        source_key = folder if folder != filename else filename
         dest_dir = os.path.join(base_dest_path, bucket)
         dest_file = os.path.join(dest_dir, filename)
     
@@ -428,75 +309,110 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries=3):
     
     # Check for existing lock file
     if check_lock_file(dest_dir, filename):
+        if progress_monitor and worker_id:
+            progress_monitor.update_worker_status(worker_id, WorkerStatus.IDLE)
         print(f"[{datetime.now()}] Skipping {filename} - lock file exists")
         return False
     
     # Create lock file
     lock_file = create_lock_file(dest_dir, filename)
     if not lock_file:
+        if progress_monitor and worker_id:
+            progress_monitor.update_worker_status(worker_id, WorkerStatus.FAILED, error="Could not create lock file")
         print(f"[{datetime.now()}] Could not create lock file for {filename}")
         return False
     
     try:
         # Update status to started
         manifest_manager.update_status(item, DownloadStatus.STARTED)
+        if progress_monitor and worker_id is not None:
+            progress_monitor.update_worker_status(worker_id, WorkerStatus.DOWNLOADING, filename, size_bytes)
         
         print(f"[{datetime.now()}] Starting download: {filename} ({format_size(size_bytes)})")
         
-        # For large files, check SSO token before starting
+        # For large files, ensure credentials are valid before starting
         if size_bytes > 100 * 1024 * 1024:  # Files larger than 100MB
-            if not check_sso_login():
-                print(f"[{datetime.now()}] SSO token expired before large file download, renewing...")
-                if not renew_sso_login():
-                    print(f"[{datetime.now()}] SSO renewal failed for {filename}")
-                    manifest_manager.update_status(item, DownloadStatus.FAILED, "SSO renewal failed")
-                    return False
+            if not ensure_valid_credentials(profile_name):
+                error_msg = "Credential validation failed"
+                if progress_monitor and worker_id:
+                    progress_monitor.update_worker_status(worker_id, WorkerStatus.FAILED, error=error_msg)
+                print(f"[{datetime.now()}] Could not validate credentials for large file download: {filename}")
+                manifest_manager.update_status(item, DownloadStatus.FAILED, error_msg)
+                return False
         
         for attempt in range(max_retries + 1):
             try:
                 if attempt > 0:
+                    if progress_monitor and worker_id:
+                        progress_monitor.update_worker_status(worker_id, WorkerStatus.RETRYING, filename, size_bytes)
                     print(f"[{datetime.now()}] Retry {attempt}/{max_retries} for {filename}")
                     time.sleep(5)
                 
-                # Download the file
-                cmd = [
-                    "aws", "s3", "cp", source_path, dest_file,
-                    "--profile", profile
-                ]
+                # Create enhanced progress callback if monitor is available
+                progress_callback = None
+                if progress_monitor and worker_id and size_bytes > 1024 * 1024:  # For files > 1MB
+                    progress_callback = EnhancedProgressCallback(filename, size_bytes, worker_id, progress_monitor)
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                # Download the file using boto3
+                success = download_file_boto3(
+                    bucket_name=bucket,
+                    key=source_key,
+                    local_path=dest_file,
+                    show_progress=(size_bytes > 10 * 1024 * 1024 and not progress_monitor),  # Show basic progress only if no monitor
+                    profile_name=profile_name,
+                    progress_callback=progress_callback
+                )
                 
-                # Success
-                print(f"[{datetime.now()}] Completed: {filename}")
-                manifest_manager.update_status(item, DownloadStatus.COMPLETED)
-                return True
+                if success:
+                    if progress_monitor and worker_id:
+                        progress_monitor.update_worker_status(worker_id, WorkerStatus.COMPLETED)
+                    print(f"[{datetime.now()}] Completed: {filename}")
+                    manifest_manager.update_status(item, DownloadStatus.COMPLETED)
+                    return True
+                else:
+                    raise Exception("Download failed")
                 
-            except subprocess.CalledProcessError as e:
-                error_msg = e.stderr.strip() if e.stderr else str(e)
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+                error_msg = format_boto3_error(e)
                 
                 # Check if retryable error
+                is_retryable = error_code in [
+                    'RequestTimeout', 'ServiceUnavailable', 'SlowDown',
+                    'InternalError', 'RequestTimeTooSkewed', 'SignatureDoesNotMatch'
+                ]
+                
+                if attempt < max_retries and is_retryable:
+                    wait_time = min(30, 5 * (2 ** attempt))  # Exponential backoff
+                    print(f"[{datetime.now()}] Retryable error for {filename}: {error_msg}")
+                    print(f"  Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    error_msg = format_boto3_error(e)
+                    if progress_monitor and worker_id:
+                        progress_monitor.update_worker_status(worker_id, WorkerStatus.FAILED, error=error_msg)
+                    print(f"[{datetime.now()}] Failed to download {filename}: {error_msg}")
+                    manifest_manager.update_status(item, DownloadStatus.FAILED, error_msg)
+                    return False
+                    
+            except Exception as e:
+                error_msg = str(e)
+                
+                # Check if retryable error based on message
                 is_retryable = any(pattern in error_msg.lower() for pattern in [
-                    'connection broken', 'connection reset', 'connection closed',
-                    'timeout', 'timed out', 'network error', 'ssl error',
-                    'ssl validation failed', 'unexpected_eof_while_reading',
-                    'eof occurred in violation of protocol', 'ssl:', 'certificate',
-                    'handshake', 'throttling', 'rate limit'
+                    'connection', 'timeout', 'network', 'ssl', 'certificate'
                 ])
                 
                 if attempt < max_retries and is_retryable:
-                    # Use exponential backoff for SSL/connection errors
-                    if any(ssl_pattern in error_msg.lower() for ssl_pattern in [
-                        'ssl', 'unexpected_eof', 'eof occurred', 'handshake'
-                    ]):
-                        wait_time = min(30, 5 * (2 ** attempt))  # 5s, 10s, 20s, max 30s
-                        print(f"[{datetime.now()}] SSL/Connection error for {filename}: {error_msg}")
-                        print(f"  Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                        time.sleep(wait_time)
-                    else:
-                        print(f"[{datetime.now()}] Retryable error for {filename}: {error_msg}")
-                        time.sleep(5)
+                    wait_time = min(30, 5 * (2 ** attempt))
+                    print(f"[{datetime.now()}] Connection error for {filename}: {error_msg}")
+                    print(f"  Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
+                    time.sleep(wait_time)
                     continue
                 else:
+                    if progress_monitor and worker_id:
+                        progress_monitor.update_worker_status(worker_id, WorkerStatus.FAILED, error=error_msg)
                     print(f"[{datetime.now()}] Failed to download {filename}: {error_msg}")
                     manifest_manager.update_status(item, DownloadStatus.FAILED, error_msg)
                     return False
@@ -504,12 +420,17 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries=3):
         return False
         
     finally:
-        # Always remove lock file
+        # Always remove lock file and reset worker status
+        if progress_monitor and worker_id:
+            progress_monitor.update_worker_status(worker_id, WorkerStatus.IDLE)
         remove_lock_file(lock_file)
 
-def download_worker(work_queue, base_dest_path, manifest_manager, max_retries, worker_id, sso_lock):
-    """Worker function for downloading files"""
-    print(f"[{datetime.now()}] Worker {worker_id} started")
+def download_worker(work_queue, base_dest_path, manifest_manager, max_retries, worker_id, profile_name, session_lock, progress_monitor=None):
+    """Worker function for downloading files using boto3"""
+    print(f"[{datetime.now()}] Worker {worker_id+1} started")
+    
+    if progress_monitor:
+        progress_monitor.update_worker_status(worker_id, WorkerStatus.IDLE)
     
     while True:
         try:
@@ -517,34 +438,36 @@ def download_worker(work_queue, base_dest_path, manifest_manager, max_retries, w
             if item is None:  # Shutdown signal
                 break
             
-            # Wait if another worker is renewing SSO
-            with sso_lock:
-                # Check SSO before download
-                if not check_sso_login():
-                    print(f"[{datetime.now()}] Worker {worker_id}: SSO expired, renewing...")
-                    print(f"[{datetime.now()}] All workers paused during SSO renewal...")
-                    if not renew_sso_login():
-                        print(f"[{datetime.now()}] Worker {worker_id}: SSO renewal failed")
-                        work_queue.put(item)  # Put item back
-                        break
-                    print(f"[{datetime.now()}] SSO renewed, workers resuming...")
+            # Ensure valid session before download (with lock to coordinate across workers)
+            with session_lock:
+                if not ensure_valid_credentials(profile_name):
+                    print(f"[{datetime.now()}] Worker {worker_id+1}: Could not validate credentials")
+                    work_queue.put(item)  # Put item back
+                    break
             
             # Download the file
-            success = download_single_file(item, base_dest_path, manifest_manager, max_retries)
+            success = download_single_file(item, base_dest_path, manifest_manager, max_retries, profile_name, progress_monitor, worker_id)
             
             work_queue.task_done()
             
         except queue.Empty:
+            if progress_monitor:
+                progress_monitor.update_worker_status(worker_id, WorkerStatus.IDLE)
             break
         except Exception as e:
-            print(f"[{datetime.now()}] Worker {worker_id} error: {e}")
+            if progress_monitor:
+                progress_monitor.update_worker_status(worker_id, WorkerStatus.FAILED, error=str(e))
+            print(f"[{datetime.now()}] Worker {worker_id+1} error: {e}")
             work_queue.task_done()
     
-    print(f"[{datetime.now()}] Worker {worker_id} finished")
+    if progress_monitor:
+        progress_monitor.update_worker_status(worker_id, WorkerStatus.IDLE)
+    print(f"[{datetime.now()}] Worker {worker_id+1} finished")
 
 def main():
     args = parse_arguments()
     base_dest_path = os.path.abspath(args.destination)
+    profile_name = args.profile
     
     # Load buckets
     buckets = load_buckets_from_file(args.buckets_file)
@@ -553,22 +476,22 @@ def main():
     
     print(f"Loaded {len(buckets)} buckets: {', '.join(buckets)}")
     print(f"Destination: {base_dest_path}")
+    print(f"AWS Profile: {profile_name}")
+    
+    # Check AWS credentials
+    if not ensure_valid_credentials(profile_name):
+        print("Failed to authenticate. Please run 'aws sso login --profile " + profile_name + "' and try again.")
+        return
     
     # Initialize manifest manager
     manifest_manager = ManifestManager(args.manifest)
     
     if args.generate_manifest or not os.path.exists(args.manifest):
         # Generate manifest
-        total_items, total_size = generate_manifest(buckets, manifest_manager)
+        total_items, total_size = generate_manifest(buckets, manifest_manager, profile_name)
         
         if args.generate_manifest:
             print(f"\nManifest saved to: {args.manifest}")
-            return
-    
-    # Check SSO
-    if not check_sso_login():
-        if not renew_sso_login():
-            print("Failed to authenticate. Exiting.")
             return
     
     # Get pending items (and failed items if requested)
@@ -600,11 +523,27 @@ def main():
     # Create destination directory
     os.makedirs(base_dest_path, exist_ok=True)
     
+    # Initialize progress monitor
+    progress_monitor = ProgressMonitor(args.max_workers)
+    
+    # Update initial stats
+    progress_monitor.update_overall_stats(
+        total_files=stats['pending'] + stats['completed'] + stats['failed'],
+        completed_files=stats['completed'],
+        failed_files=stats['failed'],
+        pending_files=len(pending_items),
+        total_size=total_size,
+        downloaded_size=completed_size
+    )
+    
     # Start multi-threaded downloads
     print(f"\n[{datetime.now()}] Starting downloads with {args.max_workers} workers...")
     
+    # Start progress monitoring
+    progress_monitor.start()
+    
     work_queue = queue.Queue()
-    sso_lock = threading.Lock()  # Coordinate SSO renewals across workers
+    session_lock = threading.Lock()  # Coordinate credential checks across workers
     
     # Add pending items to queue
     for item in pending_items:
@@ -615,7 +554,7 @@ def main():
     for i in range(args.max_workers):
         worker = threading.Thread(
             target=download_worker,
-            args=(work_queue, base_dest_path, manifest_manager, args.max_retries, i+1, sso_lock)
+            args=(work_queue, base_dest_path, manifest_manager, args.max_retries, i, profile_name, session_lock, progress_monitor)
         )
         worker.start()
         workers.append(worker)
@@ -623,23 +562,24 @@ def main():
     start_time = datetime.now()
     
     try:
-        # Monitor progress
-        while not work_queue.empty():
+        # Monitor progress with more frequent updates
+        while not work_queue.empty() or any(worker.is_alive() for worker in workers):
+            # Update overall statistics
             stats, total_size, completed_size = manifest_manager.get_stats()
-            elapsed = (datetime.now() - start_time).total_seconds()
+            progress_monitor.update_overall_stats(
+                completed_files=stats['completed'],
+                failed_files=stats['failed'],
+                pending_files=stats['pending'],
+                downloaded_size=completed_size
+            )
             
-            if completed_size > 0 and elapsed > 0:
-                rate = completed_size / elapsed
-                remaining = total_size - completed_size
-                eta = remaining / rate if rate > 0 else 0
-                
-                print(f"[{datetime.now()}] Progress: {stats['completed']}/{stats['pending'] + stats['completed']} files, "
-                      f"{format_size(completed_size)}/{format_size(total_size)} "
-                      f"({completed_size/total_size*100:.1f}%), "
-                      f"Rate: {format_size(rate)}/s, "
-                      f"ETA: {eta/3600:.1f}h")
+            # Force refresh the display
+            progress_monitor.refresh()
             
-            time.sleep(30)  # Update every 30 seconds
+            try:
+                time.sleep(1)  # Update every 1 second for better responsiveness
+            except KeyboardInterrupt:
+                break
         
         # Wait for all workers to complete
         work_queue.join()
@@ -660,6 +600,10 @@ def main():
         
         for worker in workers:
             worker.join(timeout=30)
+    
+    finally:
+        # Stop progress monitoring
+        progress_monitor.stop()
     
     # Final statistics
     stats, total_size, completed_size = manifest_manager.get_stats()
