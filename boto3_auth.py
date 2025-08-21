@@ -62,8 +62,9 @@ class SSOManager:
                     
                     # S3 specific optimizations
                     s3={
-                        'use_accelerate_endpoint': True,  # Use S3 Transfer Acceleration if available
                         'addressing_style': 'virtual'     # Use virtual hosted-style addressing
+                        # Note: Transfer acceleration removed as it can cause InvalidRequest errors
+                        # on buckets that don't have it enabled
                     }
                 )
                 
@@ -83,7 +84,6 @@ class SSOManager:
                         tcp_keepalive=True,
                         parameter_validation=False,
                         s3={
-                            'use_accelerate_endpoint': True,
                             'addressing_style': 'virtual'
                         }
                     )
@@ -107,7 +107,6 @@ class SSOManager:
                             tcp_keepalive=True,
                             parameter_validation=False,
                             s3={
-                                'use_accelerate_endpoint': True,
                                 'addressing_style': 'virtual'
                             }
                         )
@@ -170,15 +169,15 @@ class SSOManager:
         return True
 
 
-# Global SSO manager instance
-_sso_manager = None
+# Global SSO manager instances (one per profile)
+_sso_managers = {}
 
 def get_sso_manager(profile_name="default"):
-    """Get the global SSO manager instance"""
-    global _sso_manager
-    if _sso_manager is None:
-        _sso_manager = SSOManager(profile_name)
-    return _sso_manager
+    """Get the SSO manager instance for the specified profile"""
+    global _sso_managers
+    if profile_name not in _sso_managers:
+        _sso_managers[profile_name] = SSOManager(profile_name)
+    return _sso_managers[profile_name]
 
 def get_s3_client(profile_name="default", force_refresh=False):
     """Get an authenticated S3 client"""
