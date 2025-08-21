@@ -110,6 +110,13 @@ class ProgressMonitor:
                 worker = self.workers[worker_id]
                 old_status = worker.status
                 
+                # If completing a download, subtract the in-progress bytes from overall stats
+                # since they'll be added to completed_size separately
+                if (old_status == WorkerStatus.DOWNLOADING and 
+                    status == WorkerStatus.COMPLETED and 
+                    worker.bytes_downloaded > 0):
+                    self.overall_stats.downloaded_size -= worker.bytes_downloaded
+                
                 worker.status = status
                 worker.current_file = current_file
                 worker.file_size = file_size
@@ -143,7 +150,13 @@ class ProgressMonitor:
         with self.lock:
             if worker_id in self.workers:
                 worker = self.workers[worker_id]
+                old_bytes = worker.bytes_downloaded
                 worker.bytes_downloaded = bytes_downloaded
+                
+                # Update overall downloaded size with the delta
+                bytes_delta = bytes_downloaded - old_bytes
+                if bytes_delta > 0:
+                    self.overall_stats.downloaded_size += bytes_delta
                 
                 # Calculate download speed
                 if worker.start_time and bytes_downloaded > 0:
@@ -151,9 +164,8 @@ class ProgressMonitor:
                     if elapsed > 0:
                         worker.download_speed = bytes_downloaded / elapsed
         
-        # Force layout update for progress changes too
-        if self.live and self.is_running:
-            self.live.update(self._create_layout())
+        # Don't force layout update for every progress change to avoid performance issues
+        # The refresh() method will be called by the main loop
     
     def file_completed(self, worker_id: int, file_size: int):
         """Mark a file as completed"""
@@ -286,21 +298,40 @@ class ProgressMonitor:
         with self.lock:
             stats = self.overall_stats
             
+            # Calculate total downloaded including active download progress
+            total_downloaded = stats.downloaded_size
+            for worker in self.workers.values():
+                if worker.status == WorkerStatus.DOWNLOADING:
+                    total_downloaded += worker.bytes_downloaded
+            
             # Calculate percentages
             file_progress = (stats.completed_files / max(stats.total_files, 1)) * 100
-            size_progress = (stats.downloaded_size / max(stats.total_size, 1)) * 100
+            size_progress = (total_downloaded / max(stats.total_size, 1)) * 100
             
-            # Calculate overall speed
+            # Calculate overall speed from all active workers
+            overall_speed = 0
             if stats.start_time:
                 elapsed = (datetime.now() - stats.start_time).total_seconds()
-                overall_speed = stats.downloaded_size / max(elapsed, 1)
-            else:
-                overall_speed = 0
+                if elapsed > 0:
+                    # Use total downloaded including progress for speed calculation
+                    overall_speed = total_downloaded / elapsed
+                    
+                    # Also add current worker speeds for real-time rate
+                    current_worker_speed = sum(worker.download_speed for worker in self.workers.values() 
+                                             if worker.status == WorkerStatus.DOWNLOADING)
+                    
+                    # Use the higher of average speed or current instantaneous speed
+                    overall_speed = max(overall_speed, current_worker_speed)
             
-            # ETA
+            # ETA calculation based on remaining data and current speed
             eta_text = "Calculating..."
-            if stats.estimated_completion:
-                eta_text = stats.estimated_completion.strftime("%H:%M:%S")
+            if overall_speed > 0 and stats.total_size > total_downloaded:
+                remaining_bytes = stats.total_size - total_downloaded
+                eta_seconds = remaining_bytes / overall_speed
+                eta_time = datetime.now() + timedelta(seconds=eta_seconds)
+                eta_text = eta_time.strftime("%H:%M:%S")
+            elif stats.total_size <= total_downloaded:
+                eta_text = "Complete"
             
             # Runtime
             runtime = "00:00:00"
@@ -310,7 +341,7 @@ class ProgressMonitor:
             
             stats_text = f"""[bold]Overall Progress[/bold]
 Files: {stats.completed_files}/{stats.total_files} ({file_progress:.1f}%)
-Size: {self._format_size(stats.downloaded_size)}/{self._format_size(stats.total_size)} ({size_progress:.1f}%)
+Size: {self._format_size(total_downloaded)}/{self._format_size(stats.total_size)} ({size_progress:.1f}%)
 
 [bold]Performance[/bold]
 Overall Speed: {self._format_size(overall_speed)}/s
@@ -348,11 +379,15 @@ class EnhancedProgressCallback:
         self.worker_id = worker_id
         self.progress_monitor = progress_monitor
         self.last_update = 0
-        self.update_threshold = max(file_size // 200, 512 * 1024)  # Update every 0.5% or 512KB for better responsiveness
+        self.update_threshold = max(file_size // 1000, 64 * 1024)  # Update every 0.1% or 64KB for more frequent updates
+        self.last_time = time.time()
     
     def __call__(self, bytes_transferred: int):
         """Called by boto3 during download"""
-        # Only update if we've transferred enough bytes since last update
-        if bytes_transferred - self.last_update >= self.update_threshold:
+        # Update more frequently for better real-time tracking
+        current_time = time.time()
+        if (bytes_transferred - self.last_update >= self.update_threshold or 
+            current_time - self.last_time >= 0.5):  # Update at least every 0.5 seconds
             self.progress_monitor.update_worker_progress(self.worker_id, bytes_transferred)
             self.last_update = bytes_transferred
+            self.last_time = current_time
