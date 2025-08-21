@@ -581,7 +581,7 @@ def main():
             progress_monitor.refresh()
             
             try:
-                time.sleep(1)  # Update every 1 second for better responsiveness
+                time.sleep(2)  # Update every 2 seconds to avoid conflicts with progress updates
             except KeyboardInterrupt:
                 break
         

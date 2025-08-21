@@ -119,9 +119,14 @@ class ProgressMonitor:
                 
                 worker.status = status
                 worker.current_file = current_file
-                worker.file_size = file_size
-                worker.bytes_downloaded = bytes_downloaded
                 worker.current_error = error
+                
+                # Only update file_size and bytes_downloaded if explicitly provided
+                # This prevents progress from being reset during status updates
+                if file_size > 0:
+                    worker.file_size = file_size
+                if bytes_downloaded >= 0:  # Allow 0 to reset progress
+                    worker.bytes_downloaded = bytes_downloaded
                 
                 # Handle status transitions
                 if status == WorkerStatus.DOWNLOADING and old_status != WorkerStatus.DOWNLOADING:
@@ -135,13 +140,15 @@ class ProgressMonitor:
                     worker.current_file = ""
                     worker.bytes_downloaded = 0
                     worker.start_time = None
+                    worker.download_speed = 0
                 elif status == WorkerStatus.FAILED:
                     worker.total_failed += 1
                     worker.current_file = ""
                     worker.bytes_downloaded = 0
                     worker.start_time = None
+                    worker.download_speed = 0
         
-        # Force layout update
+        # Force layout update for status changes
         if self.live and self.is_running:
             self.live.update(self._create_layout())
     
@@ -158,14 +165,17 @@ class ProgressMonitor:
                 if bytes_delta > 0:
                     self.overall_stats.downloaded_size += bytes_delta
                 
-                # Calculate download speed
+                # Calculate download speed based on current session
                 if worker.start_time and bytes_downloaded > 0:
                     elapsed = (datetime.now() - worker.start_time).total_seconds()
-                    if elapsed > 0:
+                    if elapsed > 1:  # Only calculate after at least 1 second
                         worker.download_speed = bytes_downloaded / elapsed
+                    elif worker.download_speed == 0:  # Set initial speed estimate
+                        worker.download_speed = bytes_downloaded  # Bytes per second estimate
         
-        # Don't force layout update for every progress change to avoid performance issues
-        # The refresh() method will be called by the main loop
+        # Force refresh for progress updates to show real-time progress
+        if self.live and self.is_running:
+            self.live.update(self._create_layout())
     
     def file_completed(self, worker_id: int, file_size: int):
         """Mark a file as completed"""
@@ -379,15 +389,22 @@ class EnhancedProgressCallback:
         self.worker_id = worker_id
         self.progress_monitor = progress_monitor
         self.last_update = 0
-        self.update_threshold = max(file_size // 1000, 64 * 1024)  # Update every 0.1% or 64KB for more frequent updates
+        self.update_threshold = max(file_size // 2000, 32 * 1024)  # Update every 0.05% or 32KB for frequent updates
         self.last_time = time.time()
+        self.last_bytes = 0
     
     def __call__(self, bytes_transferred: int):
         """Called by boto3 during download"""
-        # Update more frequently for better real-time tracking
         current_time = time.time()
-        if (bytes_transferred - self.last_update >= self.update_threshold or 
-            current_time - self.last_time >= 0.5):  # Update at least every 0.5 seconds
+        
+        # Update if we've transferred enough bytes OR enough time has passed
+        should_update = (
+            bytes_transferred - self.last_update >= self.update_threshold or
+            current_time - self.last_time >= 0.25  # Update at least every 250ms for responsiveness
+        )
+        
+        if should_update:
             self.progress_monitor.update_worker_progress(self.worker_id, bytes_transferred)
             self.last_update = bytes_transferred
             self.last_time = current_time
+            self.last_bytes = bytes_transferred
