@@ -1,8 +1,8 @@
-# AWS S3 Multi-Threaded Downloader Requirements
+# S3Swarm - High-Performance S3 Multi-Threaded Downloader Requirements
 
 # Core Python standard library modules (no installation needed):
 # - os
-# - subprocess (still used for SSO token refresh)
+# - subprocess (used for SSO token refresh)
 # - sys
 # - time
 # - argparse
@@ -16,11 +16,15 @@
 # - concurrent.futures
 
 # Required Python packages:
-boto3>=1.26.0
-botocore>=1.29.0
-rich
+boto3>=1.40.0
+botocore>=1.40.0
+rich>=13.0.0
+
+# Optional for enhanced performance:
+# urllib3>=1.26.0  # For connection pooling optimizations
+
 # External dependencies:
-# AWS CLI (required for SSO authentication)
+# AWS CLI (required for SSO authentication and initial setup)
 # Installation: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 
 # Install Python dependencies:
@@ -35,6 +39,11 @@ rich
 # aws --version
 
 # Configure AWS CLI with your credentials:
-# aws configure sso
+# aws configure sso --profile default
 
 # Note: boto3 will use the same SSO configuration as AWS CLI
+# S3Swarm is optimized for high-bandwidth connections (1Gbps+) with:
+# - max_pool_connections=100 (10x default)
+# - S3 Transfer Acceleration support
+# - Adaptive retry configuration
+# - TCP keepalive optimizations
