@@ -326,7 +326,7 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries, pr
         # Update status to started
         manifest_manager.update_status(item, DownloadStatus.STARTED)
         if progress_monitor and worker_id is not None:
-            progress_monitor.update_worker_status(worker_id, WorkerStatus.DOWNLOADING, filename, size_bytes)
+            progress_monitor.update_worker_status(worker_id, WorkerStatus.DOWNLOADING, filename, size_bytes, 0)  # Reset bytes to 0
         
         print(f"[{datetime.now()}] Starting download: {filename} ({format_size(size_bytes)})")
         
@@ -350,7 +350,7 @@ def download_single_file(item, base_dest_path, manifest_manager, max_retries, pr
                 
                 # Create enhanced progress callback if monitor is available
                 progress_callback = None
-                if progress_monitor and worker_id and size_bytes > 1024 * 1024:  # For files > 1MB
+                if progress_monitor and worker_id is not None and size_bytes > 0:  # For any file with known size
                     progress_callback = EnhancedProgressCallback(filename, size_bytes, worker_id, progress_monitor)
                 
                 # Download the file using boto3
